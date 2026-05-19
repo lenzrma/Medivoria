@@ -1,9 +1,8 @@
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.EventSystems;
 using System.Collections;
 
-public class Tile : MonoBehaviour, IPointerClickHandler
+public class Tile : MonoBehaviour
 {
     [Header("Components")]
     public Image iconImage;
@@ -59,12 +58,6 @@ public class Tile : MonoBehaviour, IPointerClickHandler
         transform.localScale = Vector3.one;
     }
 
-    public void OnPointerClick(PointerEventData eventData)
-    {
-        if (IsMatched) return;
-        GridManager.Instance.OnTileClicked(this);
-    }
-
     public void SetSelected(bool selected)
     {
         IsSelected = selected;
@@ -85,21 +78,32 @@ public class Tile : MonoBehaviour, IPointerClickHandler
 
     IEnumerator DisappearAnimation()
     {
-        float duration = 0.3f;
-        float elapsed = 0f;
+        if (selectionGlow) selectionGlow.SetActive(false);
+
         var cg = GetComponent<CanvasGroup>();
         if (!cg) cg = gameObject.AddComponent<CanvasGroup>();
 
-        while (elapsed < duration)
+        var rt = GetComponent<RectTransform>();
+        bool sand = rt != null && iconImage != null && iconImage.sprite != null;
+
+        if (sand)
+            yield return TileSandBurstEffect.Run(rt, iconImage, tileBackground);
+        else
         {
-            elapsed += Time.deltaTime;
-            float t = elapsed / duration;
-            cg.alpha = 1f - t;
-            transform.localScale = Vector3.Lerp(Vector3.one, Vector3.zero, t);
-            yield return null;
+            float duration = 0.3f;
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = elapsed / duration;
+                cg.alpha = 1f - t;
+                transform.localScale = Vector3.Lerp(Vector3.one, Vector3.zero, t);
+                yield return null;
+            }
         }
 
         cg.alpha = 0f;
+        transform.localScale = Vector3.one;
         SetEmpty();
     }
 }
