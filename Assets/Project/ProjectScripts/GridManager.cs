@@ -48,7 +48,10 @@ public class GridManager : MonoBehaviour
         Shuffle(tileTypes);
 
         foreach (Transform child in gridParent)
+        {
+            if (child != null && child.name == GameManager.PlayBoardMatteChildName) continue;
             Destroy(child.gameObject);
+        }
 
         for (int y = 0; y < rows; y++)
             for (int x = 0; x < columns; x++)
@@ -100,7 +103,14 @@ public class GridManager : MonoBehaviour
     public void OnTileClicked(Tile tile)
     {
         if (isProcessing || !GameManager.Instance.IsGameRunning()) return;
-        if (tile.IsMatched || tile.IsSelected) return;
+        if (tile.IsMatched) return;
+
+        if (firstSelected == tile)
+        {
+            firstSelected.SetSelected(false);
+            firstSelected = null;
+            return;
+        }
 
         if (firstSelected == null)
         {
@@ -109,13 +119,6 @@ public class GridManager : MonoBehaviour
         }
         else
         {
-            if (firstSelected == tile)
-            {
-                firstSelected.SetSelected(false);
-                firstSelected = null;
-                return;
-            }
-
             if (firstSelected.TileType == tile.TileType)
             {
                 List<Vector2Int> path = FindPath(firstSelected.GridX, firstSelected.GridY, tile.GridX, tile.GridY);
@@ -148,11 +151,34 @@ public class GridManager : MonoBehaviour
         b.SetMatched();
         GameManager.Instance.OnMatchFound();
 
+        if (!GameManager.Instance.IsGameRunning())
+        {
+            isProcessing = false;
+            yield break;
+        }
+
         yield return new WaitForSeconds(0.32f);
         ApplyMovementAfterMatch();
 
+        if (!GameManager.Instance.IsGameRunning())
+        {
+            isProcessing = false;
+            yield break;
+        }
+
+        if (!HasLivingTiles())
+        {
+            GameManager.Instance.OnAllTilesCleared();
+            isProcessing = false;
+            yield break;
+        }
+
         if (!HasAnyMoves() && HasLivingTiles())
+        {
+            if (TryStartDeadlockResolve())
+                yield break;
             yield return StartCoroutine(ShuffleBoard());
+        }
         else
             isProcessing = false;
     }
@@ -165,6 +191,7 @@ public class GridManager : MonoBehaviour
         firstSelected.SetSelected(false);
         b.SetSelected(false);
         firstSelected = null;
+        GameEvents.RaiseWrongMatch();
         isProcessing = false;
     }
 
@@ -402,7 +429,30 @@ public class GridManager : MonoBehaviour
         return false;
     }
 
-    IEnumerator ShuffleBoard()
+    /// <summary>Поле пустое или последняя пара без пути — не зацикливать shuffle.</summary>
+    bool TryStartDeadlockResolve()
+    {
+        List<Tile> alive = CollectAliveTiles();
+        if (alive.Count == 0)
+        {
+            GameManager.Instance.OnAllTilesCleared();
+            isProcessing = false;
+            return true;
+        }
+
+        if (alive.Count == 2 && alive[0].TileType == alive[1].TileType)
+        {
+            if (FindPath(alive[0].GridX, alive[0].GridY, alive[1].GridX, alive[1].GridY) != null)
+                return false;
+
+            StartCoroutine(ForceFinishLastPair(alive[0], alive[1]));
+            return true;
+        }
+
+        return false;
+    }
+
+    IEnumerator ForceFinishLastPair(Tile a, Tile b)
     {
         isProcessing = true;
         if (firstSelected != null)
@@ -410,6 +460,42 @@ public class GridManager : MonoBehaviour
             firstSelected.SetSelected(false);
             firstSelected = null;
         }
+
+        var path = new List<Vector2Int>
+        {
+            new Vector2Int(a.GridX, a.GridY),
+            new Vector2Int(b.GridX, b.GridY)
+        };
+        yield return MatchTiles(a, b, path);
+    }
+
+    List<Tile> CollectAliveTiles()
+    {
+        var list = new List<Tile>();
+        for (int x = 0; x < columns; x++)
+        for (int y = 0; y < rows; y++)
+            if (!CellEmpty(x, y)) list.Add(grid[x, y]);
+        return list;
+    }
+
+    IEnumerator ShuffleBoard()
+    {
+        if (!GameManager.Instance.IsGameRunning())
+        {
+            isProcessing = false;
+            yield break;
+        }
+
+        isProcessing = true;
+        if (firstSelected != null)
+        {
+            firstSelected.SetSelected(false);
+            firstSelected = null;
+        }
+
+        if (TryStartDeadlockResolve())
+            yield break;
+
         Debug.Log("Нет ходов — перемешиваем!");
         yield return new WaitForSeconds(0.5f);
 
@@ -426,6 +512,7 @@ public class GridManager : MonoBehaviour
 
         EnsurePlayableBoard();
 
+        GameEvents.RaiseBoardShuffled();
         isProcessing = false;
     }
 
@@ -580,7 +667,10 @@ public class GridManager : MonoBehaviour
         grid = new Tile[columns, rows];
 
         foreach (Transform child in gridParent)
+        {
+            if (child != null && child.name == GameManager.PlayBoardMatteChildName) continue;
             Destroy(child.gameObject);
+        }
 
         for (int y = 0; y < rows; y++)
         for (int x = 0; x < columns; x++)
@@ -597,5 +687,9 @@ public class GridManager : MonoBehaviour
             else tile.Init(x, y, t, tileSprites[t]);
             grid[x, y] = tile;
         }
+
+        EnsurePlayableBoard();
+        if (!HasAnyMoves() && HasLivingTiles())
+            StartCoroutine(ShuffleBoard());
     }
 }
